@@ -1,6 +1,15 @@
-name: Build wheels
+name: Build wheels AND Upload Python Package
 
-on: [push]
+on:
+  release:
+    types: [published]
+  push:
+    tags:
+    - '*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
 
 jobs:
   build_wheels:
@@ -8,13 +17,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-22.04, windows-2022, macos-12]
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.11.2
+        uses: pypa/cibuildwheel@v2.17.0
         env:
           CIBW_ARCHS_MACOS: "x86_64 universal2 arm64"
           CIBW_TEST_REQUIRES: tox
@@ -23,6 +34,42 @@ jobs:
           CIBW_BUILD_VERBOSITY: 1
 
       - name: Store wheels
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
+          name: dist-${{ matrix.os }}-${{ strategy.job-index }}
           path: ./wheelhouse/*.whl
+
+  publish:
+    name: Publish wheels to PyPI
+    needs: build_wheels
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+
+      - name: Setup python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Twine
+        run: |
+          pip install twine
+          cd dist && for i in $(ls); do mv ${i}/*.whl .; rmdir ${i}; done && cd ..
+
+      - name: Create Release
+        uses: ncipollo/release-action@v1.14.0
+        with:
+          artifacts: "dist/*.whl"
+          tag: "TgCrypto-${{ github.ref_name }}"
+          commit: ${{ github.sha }}
+
+      - name: Publish wheels to PyPI
+        run: twine upload dist/*
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
